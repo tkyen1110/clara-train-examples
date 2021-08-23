@@ -6,25 +6,38 @@ services:
     container_name: claradevday-pt
     hostname: claratrain
     ##### use vanilla clara train docker
-    image: nvcr.io/nvidia/clara-train-sdk:v4.0
+    # image: nvcr.io/nvidia/clara-train-sdk:v4.0
     ##### to build image with GPU dashboard inside jupyter lab
-#    build:
-#      context: ./dockerWGPUDashboardPlugin/    # Project root
-#      dockerfile: ./Dockerfile                 # Relative to context
-#    image: clara-train-nvdashboard:v4.0
+    build:
+      context: ./dockerWGPUDashboardPlugin/    # Project root
+      dockerfile: ./Dockerfile                 # Relative to context
+      args:
+        USER: ${USER}
+        UID: ${UID}
+        GID: ${GID}
+    image: clara-train-nvdashboard:v4.0
     depends_on:
       - tritonserver
     ports:
       - "3030:8888"  # Jupyter lab port
       - "3031:5000"  # AIAA port
+      - "6006:6006"  # Tensorboard port
     ipc: host
     volumes:
       - ${TRAIN_DEV_DAY_ROOT}:/claraDevDay/
       - /raid/users/aharouni/data:/data/
     command: "jupyter lab /claraDevDay --ip 0.0.0.0 --allow-root --no-browser --config /claraDevDay/scripts/jupyter_notebook_config.py"
-#    command: tail -f /dev/null
-#    tty: true
-#############################################################
+    # command: tail -f /dev/null
+    # tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [ gpu ]
+              # To specify certain GPU uncomment line below
+              #device_ids: ['0,3']
+############################################################
   tritonserver:
     image: nvcr.io/nvidia/tritonserver:21.02-py3
     container_name: aiaa-triton
