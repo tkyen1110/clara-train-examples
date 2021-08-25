@@ -40,6 +40,7 @@ RUN pip install git+https://github.com/chaoleili/jupyterlab_tensorboard.git
 
 RUN pip install sanic
 RUN apt-get install -y dcm2niix
+RUN apt-get install -y nifti2dicom
 
 # For workshops copy content inside docker image
 #COPY ./ /claraDevDay/
