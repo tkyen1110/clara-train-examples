@@ -10,6 +10,10 @@ def os_makedirs(dst_dir, keep_exists=False):
             shutil.rmtree(dst_dir)
         os.makedirs(dst_dir)
 
+def os_remove(dst_file_path):
+    if os.path.isfile(dst_file_path):
+        os.remove(dst_file_path)
+
 def shutil_rmtree(dst_dir):
     if os.path.isdir(dst_dir):
         shutil.rmtree(dst_dir)

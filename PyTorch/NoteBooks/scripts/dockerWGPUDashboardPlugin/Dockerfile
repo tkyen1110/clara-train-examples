@@ -38,32 +38,34 @@ RUN pip install jupyterlab-nvdashboard
 # RUN pip install git+https://github.com/cliffwoolley/jupyter_tensorboard.git
 RUN pip install git+https://github.com/chaoleili/jupyterlab_tensorboard.git
 
-RUN pip install sanic
-RUN apt-get install -y dcm2niix
-RUN apt-get install -y nifti2dicom
+RUN pip install sanic \
+    && pip install boto3==1.18.11
+RUN apt-get install -y dcm2niix \
+    && apt-get install -y nifti2dicom \
+    && apt-get install -y pigz
 
 # For workshops copy content inside docker image
 #COPY ./ /claraDevDay/
 
 
-# Set the home directory to our user's home.
-ENV USER=$USER
-ENV HOME="/home/$USER"
+# # Set the home directory to our user's home.
+# ENV USER=$USER
+# ENV HOME="/home/$USER"
 
-RUN echo "Create $USER account" &&\
-    # Create the home directory for the new $USER
-    mkdir -p $HOME &&\
-    # Create an $USER so our program doesn't run as root.
-    groupadd -r -g $GID $USER &&\
-    useradd -r -g $USER -G sudo -u $UID -d $HOME -s /sbin/nologin -c "Docker image user" $USER &&\
-    # Set root user no password
-    mkdir -p /etc/sudoers.d &&\
-    echo "$USER ALL=(root) NOPASSWD:ALL" > /etc/sudoers.d/$USER && \
-    chmod 0440 /etc/sudoers.d/$USER
+# RUN echo "Create $USER account" &&\
+#     # Create the home directory for the new $USER
+#     mkdir -p $HOME &&\
+#     # Create an $USER so our program doesn't run as root.
+#     groupadd -r -g $GID $USER &&\
+#     useradd -r -g $USER -G sudo -u $UID -d $HOME -s /sbin/nologin -c "Docker image user" $USER &&\
+#     # Set root user no password
+#     mkdir -p /etc/sudoers.d &&\
+#     echo "$USER ALL=(root) NOPASSWD:ALL" > /etc/sudoers.d/$USER && \
+#     chmod 0440 /etc/sudoers.d/$USER
 
-COPY .bashrc $HOME/
-# Chown all the files to the $USER
-RUN chown -R $USER:$USER $HOME
+# COPY .bashrc $HOME/
+# # Chown all the files to the $USER
+# RUN chown -R $USER:$USER $HOME
 
 
 WORKDIR /claraDevDay/
