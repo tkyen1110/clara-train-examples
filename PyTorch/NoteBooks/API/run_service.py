@@ -7,6 +7,8 @@ import subprocess
 from collections import OrderedDict
 from utils import *
 import numpy as np
+import base64, io
+import PIL.Image
 
 import requests
 from sanic import Sanic
@@ -122,7 +124,26 @@ def org_dcm_to_png(dcm_dir, png_dir):
         png_file_path = os.path.join(png_dir, png_file_name)
         cv2.imwrite(png_file_path, img, [cv2.IMWRITE_PNG_COMPRESSION, 0])
 
-def seg_dcm_to_png_and_json(seg_dcm_dir, png_dir, json_dir, organ):
+
+def img_b64_to_arr(img_b64):
+    f = io.BytesIO()
+    f.write(base64.b64decode(img_b64))
+    img_arr = np.array(PIL.Image.open(f))
+    return img_arr
+
+
+def img_arr_to_b64(img_arr):
+    img_pil = PIL.Image.fromarray(img_arr)
+    f = io.BytesIO()
+    img_pil.save(f, format='PNG')
+    img_bin = f.getvalue()
+    if hasattr(base64, 'encodebytes'):
+        img_b64 = base64.encodebytes(img_bin)
+    else:
+        img_b64 = base64.encodestring(img_bin)
+    return img_b64
+
+def seg_dcm_to_png_and_json(org_png_dir, seg_dcm_dir, seg_png_dir, seg_json_dir, organ):
     seg_dcm_list = sorted(os.listdir(seg_dcm_dir))
     # kernel_1 = cv2.getStructuringElement(cv2.MORPH_RECT,(3,3))
     # kernel_2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3))
@@ -136,8 +157,14 @@ def seg_dcm_to_png_and_json(seg_dcm_dir, png_dir, json_dir, organ):
 
         save_empty_json = False
         png_file_name = os.path.splitext(seg_dcm_file)[0] + '.png'
+
+        org_png_file_path = os.path.join(org_png_dir, png_file_name)
+        img_pil = PIL.Image.open(org_png_file_path)
+        img_arr = np.array(img_pil)
+        imageData = img_arr_to_b64(img_arr).decode('ascii')
+
         if img.any():
-            png_file_path = os.path.join(png_dir, png_file_name)
+            png_file_path = os.path.join(seg_png_dir, png_file_name)
             cv2.imwrite(png_file_path, img, [cv2.IMWRITE_PNG_COMPRESSION, 0])
 
             # dilation = cv2.dilate(img, kernel_1, iterations = 1)
@@ -161,7 +188,7 @@ def seg_dcm_to_png_and_json(seg_dcm_dir, png_dir, json_dir, organ):
                         json_dict["flags"] = dict()
                         json_dict["shapes"] = list()
                         json_dict["imagePath"] = png_file_name
-                        json_dict["imageData"] = None
+                        json_dict["imageData"] = imageData
                         json_dict["imageHeight"] = img.shape[0]
                         json_dict["imageWidth"] = img.shape[1]
 
@@ -212,12 +239,12 @@ def seg_dcm_to_png_and_json(seg_dcm_dir, png_dir, json_dir, organ):
             json_dict["flags"] = dict()
             json_dict["shapes"] = list()
             json_dict["imagePath"] = png_file_name
-            json_dict["imageData"] = None
+            json_dict["imageData"] = imageData
             json_dict["imageHeight"] = img.shape[0]
             json_dict["imageWidth"] = img.shape[1]
 
         json_file_name = os.path.splitext(seg_dcm_file)[0] + '.json'
-        json_file_path = os.path.join(json_dir, json_file_name)
+        json_file_path = os.path.join(seg_json_dir, json_file_name)
         with open(json_file_path, 'w') as json_file:
             json.dump(json_dict, json_file, sort_keys=False, indent=2, separators=(',', ': '))
 
@@ -410,7 +437,7 @@ def clara_inference(request_dict):
 
     # Convert dicom to png and json
     t_start = time.time()
-    seg_dcm_to_png_and_json(seg_nii_dcm_dir, seg_nii_png_dir, seg_nii_json_dir, organ)
+    seg_dcm_to_png_and_json(png_dir, seg_nii_dcm_dir, seg_nii_png_dir, seg_nii_json_dir, organ)
     t_convert = time.time() - t_start
 
     # Remove intermediate files

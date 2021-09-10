@@ -21,6 +21,7 @@ services:
     ports:
       - "3030:8888"  # Jupyter lab port
       - "3031:5000"  # AIAA port
+      - "3032:1234"  # API port
       - "6006:6006"  # Tensorboard port
     ipc: host
     volumes:
@@ -50,6 +51,7 @@ services:
           --model-control-mode="poll" \
           --repository-poll-secs=5 \
           --log-verbose ${TRITON_VERBOSE}"
+    # --min-supported-compute-capability 8.6
     volumes:
       - ${TRAIN_DEV_DAY_ROOT}/AIAA/workspace/triton_models:/triton_models
 #    shm_size: 1gb
