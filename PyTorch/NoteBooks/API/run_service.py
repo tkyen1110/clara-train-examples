@@ -9,6 +9,7 @@ from utils import *
 import numpy as np
 import base64, io
 import PIL.Image
+from multiprocessing import Process
 
 import requests
 from sanic import Sanic
@@ -248,93 +249,6 @@ def seg_dcm_to_png_and_json(org_png_dir, seg_dcm_dir, seg_png_dir, seg_json_dir,
         with open(json_file_path, 'w') as json_file:
             json.dump(json_dict, json_file, sort_keys=False, indent=2, separators=(',', ': '))
 
-
-empty_response = {
-                    "message": "",
-                    "description": ""
-                 }
-
-@app.route("/clara/<organ>", methods=['POST'])
-async def clara(request, organ):
-    if organ not in organ2mmar:
-        empty_response["message"] = "fail"
-        empty_response["description"] = "Does not support {} inference. Support only {}"\
-                                        .format(organ, ', '.join(organ2mmar.keys()))
-        return response.json(empty_response)
-
-    request_dict = request.json
-    endpoint = request_dict.get('endpoint', None)
-    print(endpoint)
-    access_key = request_dict.get('access_key', None)
-    secret_key = request_dict.get('secret_key', None)
-    bucket = request_dict.get('bucket', None)
-    asset_group = request_dict.get('asset_group', None)
-    output_s3_folder = request_dict.get('output_s3_folder', None)
-
-    if endpoint and access_key and secret_key and bucket and asset_group:
-        if isinstance(asset_group, list):
-            connection = connect_to_s3(endpoint, access_key, secret_key)
-            for asset in asset_group:
-                category_name = asset.get("category_name", None)
-                files = asset.get("files", None)
-
-                dcm_dir_name = files[0].split('/')[-2]
-                dcm_dir = os.path.join(imagesTr_dir, dcm_dir_name)
-
-                # Download file from S3 blob
-                print("Downloading {:<15s} folder from s3 blob to {}".format(dcm_dir_name, dcm_dir))
-
-                os_makedirs(dcm_dir)
-                for s3_file_path in files:
-                    dcm_file_name = os.path.basename(s3_file_path)
-                    dcm_file_path = os.path.join(dcm_dir, dcm_file_name)
-                    if not download_s3_file(connection, bucket, s3_file_path, dcm_file_path):
-                        empty_response["message"] = "fail"
-                        empty_response["description"] = "Cannot download {} from s3 blob".format(s3_file_path)
-                        return response.json(empty_response)
-
-                # Inference
-                print("Inferring {}".format(dcm_dir_name))
-                clara_dict = {"dcm_dir_name": dcm_dir_name, "organ": organ}
-                seg_nii_json_dir = clara_inference(clara_dict)
-
-                # Upload file to S3 blob
-                s3_file_dir = os.path.join(output_s3_folder, category_name, "json")
-                print("Uploading jsons from {:<15s} folder to s3 blob {}".format(os.path.basename(seg_nii_json_dir), s3_file_dir))
-                for seg_nii_json_file in os.listdir(seg_nii_json_dir):
-                    docker_file_path = os.path.join(seg_nii_json_dir, seg_nii_json_file)
-                    s3_file_path = os.path.join(s3_file_dir, seg_nii_json_file)
-                    if not upload_s3_file(connection, bucket, docker_file_path, s3_file_path):
-                        empty_response["message"] = "fail"
-                        empty_response["description"] = "Cannot upload {} to s3 blob".format(docker_file_path)
-                        return response.json(empty_response)
-
-        else:
-            empty_response["message"] = "fail"
-            empty_response["description"] = "asset_group is not list"
-            return response.json(empty_response)
-    else:
-        des_msg_list = []
-        if not endpoint:
-            des_msg_list.append("endpoint")
-        if not access_key:
-            des_msg_list.append("access_key")
-        if not secret_key:
-            des_msg_list.append("secret_key")
-        if not bucket:
-            des_msg_list.append("bucket")
-        if not asset_group:
-            des_msg_list.append("asset_group")
-
-        empty_response["message"] = "fail"
-        empty_response["description"] = "Lack of {}".format(', '.join(des_msg_list))
-        return response.json(empty_response)
-
-    empty_response["message"] = "success"
-    empty_response["description"] = ""
-    return response.json(empty_response)
-
-
 def clara_inference(request_dict):
     t_start_all = time.time()
     dcm_dir_name = request_dict.get('dcm_dir_name', None)
@@ -461,6 +375,148 @@ def clara_inference(request_dict):
     return seg_nii_json_dir
 
 
+def update_progress(progress_dict, progress_json_path):
+    with open(progress_json_path, 'w') as json_file:
+        json.dump(progress_dict, json_file, sort_keys=False, indent=2, separators=(',', ': '))
+
+
+def clara_func(request_dict, organ):
+    endpoint = request_dict.get('endpoint', None)
+    access_key = request_dict.get('access_key', None)
+    secret_key = request_dict.get('secret_key', None)
+    bucket = request_dict.get('bucket', None)
+    asset_group = request_dict.get('asset_group', None)
+    output_s3_folder = request_dict.get('output_s3_folder', None)
+
+    connection = connect_to_s3(endpoint, access_key, secret_key)
+
+    result_json = []
+    progress_dict = {"total": "", "finished": "", "interrupted": 0, "asset_group": ""}
+    for asset in asset_group:
+        category_name = asset.get("category_name", None)
+        result_json.append({"category_name": category_name, "status": "", "message": ""})
+    progress_dict["total"] = len(asset_group)
+    progress_dict["finished"] = 0
+    progress_dict["asset_group"] = result_json
+    organ_mmar_dir = os.path.join(mmar_dir, organ2mmar[organ])
+    organ_eval_dir = os.path.join(organ_mmar_dir, "eval")
+    progress_json_path = os.path.join(organ_eval_dir, '{}_log.json'.format(output_s3_folder.split('/')[-1]))
+    progress_s3_path = os.path.join(output_s3_folder, '{}_log.json'.format(output_s3_folder.split('/')[-1]))
+    update_progress(progress_dict, progress_json_path)
+    upload_s3_file(connection, bucket, progress_json_path, progress_s3_path)
+
+    for i, asset in enumerate(asset_group):
+        category_name = asset.get("category_name", None)
+        files = asset.get("files", None)
+
+        dcm_dir_name = files[0].split('/')[-2]
+        dcm_dir = os.path.join(imagesTr_dir, dcm_dir_name)
+
+        # Download file from S3 blob
+        print("Downloading {:<15s} folder from s3 blob to {}".format(dcm_dir_name, dcm_dir))
+        result_json[i]["status"] = "processing"
+        result_json[i]["message"] = "downloading sth from s3"
+        progress_dict["asset_group"] = result_json
+        update_progress(progress_dict, progress_json_path)
+
+        os_makedirs(dcm_dir)
+        j = 0
+        for s3_file_path in files:
+            dcm_file_name = os.path.basename(s3_file_path)
+            dcm_file_path = os.path.join(dcm_dir, dcm_file_name)
+            if not download_s3_file(connection, bucket, s3_file_path, dcm_file_path):
+                result_json[i]["status"] = "fail"
+                result_json[i]["message"] = "Cannot download {} from s3 blob".format(s3_file_path)
+                progress_dict["finished"] = i + 1
+                progress_dict["asset_group"] = result_json
+                update_progress(progress_dict, progress_json_path)
+                upload_s3_file(connection, bucket, progress_json_path, progress_s3_path)
+                break
+            j = j + 1
+        if j != len(files):
+            continue
+
+        # Inference
+        print("Inferring {}".format(dcm_dir_name))
+        result_json[i]["status"] = "processing"
+        result_json[i]["message"] = "inferring"
+        progress_dict["asset_group"] = result_json
+        update_progress(progress_dict, progress_json_path)
+        clara_dict = {"dcm_dir_name": dcm_dir_name, "organ": organ}
+        seg_nii_json_dir = clara_inference(clara_dict)
+
+        # Upload file to S3 blob
+        s3_file_dir = os.path.join(output_s3_folder, category_name, "json")
+        print("Uploading jsons from {:<15s} folder to s3 blob {}".format(os.path.basename(seg_nii_json_dir), s3_file_dir))
+        result_json[i]["status"] = "processing"
+        result_json[i]["message"] = "uploading sth to s3"
+        progress_dict["asset_group"] = result_json
+        update_progress(progress_dict, progress_json_path)
+        for seg_nii_json_file in os.listdir(seg_nii_json_dir):
+            docker_file_path = os.path.join(seg_nii_json_dir, seg_nii_json_file)
+            s3_file_path = os.path.join(s3_file_dir, seg_nii_json_file)
+            if not upload_s3_file(connection, bucket, docker_file_path, s3_file_path):
+                result_json[i]["status"] = "fail"
+                result_json[i]["message"] = "Cannot upload {} to s3 blob".format(docker_file_path)
+                progress_dict["finished"] = i + 1
+                progress_dict["asset_group"] = result_json
+                update_progress(progress_dict, progress_json_path)
+
+        result_json[i]["status"] = "finished"
+        result_json[i]["message"] = "clara inference is finished"
+        progress_dict["finished"] = i + 1
+        progress_dict["asset_group"] = result_json
+        update_progress(progress_dict, progress_json_path)
+
+empty_response = {
+                    "message": ""
+                 }
+
+@app.route("/clara/<organ>", methods=['POST'])
+async def clara(request, organ):
+    proc = None
+    if organ not in organ2mmar:
+        empty_response["message"] = "Does not support {} inference. Support only {}"\
+                                    .format(organ, ', '.join(organ2mmar.keys()))
+        return response.json(empty_response)
+
+    request_dict = request.json
+    endpoint = request_dict.get('endpoint', None)
+    access_key = request_dict.get('access_key', None)
+    secret_key = request_dict.get('secret_key', None)
+    bucket = request_dict.get('bucket', None)
+    asset_group = request_dict.get('asset_group', None)
+    output_s3_folder = request_dict.get('output_s3_folder', None)
+
+    if endpoint and access_key and secret_key and bucket and asset_group:
+        if isinstance(asset_group, list):
+            proc = Process(target=clara_func, args=(request_dict, organ))
+            proc.start()
+            empty_response["message"] = "Total {} patiens will be dealt with by batch mode".format(len(asset_group))
+            return response.json(empty_response)
+        else:
+            empty_response["message"] = "asset_group is not list"
+            return response.json(empty_response)
+    else:
+        des_msg_list = []
+        if not endpoint:
+            des_msg_list.append("endpoint")
+        if not access_key:
+            des_msg_list.append("access_key")
+        if not secret_key:
+            des_msg_list.append("secret_key")
+        if not bucket:
+            des_msg_list.append("bucket")
+        if not asset_group:
+            des_msg_list.append("asset_group")
+
+        empty_response["message"] = "Lack of {}".format(', '.join(des_msg_list))
+        return response.json(empty_response)
+
+    empty_response["message"] = "success"
+    return response.json(empty_response)
+
+
 @app.route("/clara_infer", methods=['POST'])
 async def clara_infer(request):
     t_start_all = time.time()
@@ -473,6 +529,23 @@ async def clara_infer(request):
 async def get_label(request):
     return response.text("clara_seg")
 
+
+@app.route("/stop", methods=['POST'])
+async def stop_infer(request):
+    print("Stop inference")
+    if proc:
+        if proc.is_alive():
+            proc.terminate()
+
+            with open(progress_json_path, 'r') as json_file:
+                progress_dict = json.load(json_file)
+
+            progress_dict["interrupted"] = 1
+            update_progress(progress_dict, progress_json_path)
+            upload_s3_file(connection, bucket, progress_json_path, progress_s3_path)
+            return response.json({"message": "stopped"})
+
+    return response.json({"message": "no process running"})
 
 if __name__ == "__main__":
     app.run(host = '0.0.0.0', port = 1234)
