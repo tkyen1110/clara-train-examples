@@ -3,9 +3,9 @@ organ="spleen"
 # spleen
 # pancreas
 
-endpoint=""
-access_key=""
-secret_key=""
+endpoint="https://s3.twcc.ai:443"
+access_key="5QL09M2O1Y8E4GTOFC9Z"
+secret_key="9mXMT1kJAYAzOGZusIc5CT856cc3O22FqaYZpeTN"
 bucket="test-bucket-clara"
 output_s3_folder="Inference_Source/2021-09-02_13:31:07.303"
 
